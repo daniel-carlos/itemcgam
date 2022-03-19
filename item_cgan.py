@@ -1,4 +1,3 @@
-import imp
 import signal
 import sys
 
@@ -33,6 +32,8 @@ parser.add_argument("--n_classes", type=int, default=10, help="number of classes
 parser.add_argument("--img_size", type=int, default=64, help="size of each image dimension")
 parser.add_argument("--channels", type=int, default=1, help="number of image channels")
 parser.add_argument("--sample_interval", type=int, default=400, help="interval between image sampling")
+parser.add_argument("--json_data", type=str, default="./dataset/items/items.json", help="path to json data")
+parser.add_argument("--imgs_path", type=str, default="./dataset/items/images", help="path to images")
 opt = parser.parse_args()
 print(opt)
 
@@ -78,7 +79,7 @@ adversarial_loss = torch.nn.MSELoss()
 
 # Initialize generator and discriminator
 generator = Generator(opt.latent_dim, tags, img_shape)
-discriminator = Discriminator(opt.latent_dim, tags, img_shape)
+discriminator = Discriminator(tags, img_shape)
 
 if cuda:
     generator.cuda()
@@ -133,7 +134,7 @@ class ItemDataset(Dataset):
 # Configure data loader
 transform = transforms.Grayscale() if opt.channels == 1 else None
 dataloader = DataLoader(
-    ItemDataset("./items.json", "./items", tags, transform),
+    ItemDataset(opt.json_data, opt.imgs_path, tags, transform),
     # ItemDataset("./items.json", "./items", tags),
     batch_size=opt.batch_size,
     shuffle=True,
@@ -154,13 +155,13 @@ def sample_image(n_row, batches_done):
     # Get labels ranging from 0 to n_classes for n rows
     labels = torch.randint(0,2, (100, len(tags)))
     labels = Variable(LongTensor(labels))
-    gen_imgs = generator(z, labels)
-    save_image(gen_imgs.data, "images/%d.png" % batches_done, nrow=n_row, normalize=True)
+    gen_imgs = generator(z, labels, img_shape)
+    save_image(gen_imgs.data, "results/images/%d.png" % batches_done, nrow=n_row, normalize=True)
 
 
 
 def signal_handler(signal, frame):
-  torch.save(generator, "item_cgan.pt")
+  torch.save(generator, "results/models/item_cgan.pt")
   sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -195,7 +196,7 @@ for epoch in range(opt.n_epochs):
         gen_mask = torch.randint(0,2, (batch_size, len(tags)))
 
         # Generate a batch of images
-        gen_imgs = generator(z, gen_mask)
+        gen_imgs = generator(z, gen_mask, img_shape)
 
         # Loss measures generator's ability to fool the discriminator
         validity = discriminator(gen_imgs, gen_mask)
