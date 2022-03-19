@@ -27,7 +27,7 @@ parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rat
 parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
-parser.add_argument("--latent_dim", type=int, default=100, help="dimensionality of the latent space")
+parser.add_argument("--latent_dim", type=int, default=30, help="dimensionality of the latent space")
 parser.add_argument("--n_classes", type=int, default=10, help="number of classes for dataset")
 parser.add_argument("--img_size", type=int, default=64, help="size of each image dimension")
 parser.add_argument("--channels", type=int, default=1, help="number of image channels")
@@ -151,11 +151,16 @@ LongTensor = torch.cuda.LongTensor if cuda else torch.LongTensor
 def sample_image(n_row, batches_done):
     """Saves a grid of generated digits ranging from 0 to n_classes"""
     # Sample noise
-    z = Variable(FloatTensor(np.random.normal(0, 1, (n_row ** 2, opt.latent_dim))))
-    # Get labels ranging from 0 to n_classes for n rows
-    labels = torch.randint(0,2, (100, len(tags)))
-    labels = Variable(LongTensor(labels))
-    gen_imgs = generator(z, labels, img_shape)
+    z = FloatTensor(np.random.normal(0, 1, (n_row ** 2, opt.latent_dim)))
+
+    labelsx = torch.from_numpy(np.array([
+        [0,0],[0,1],[1,0],[1,1],
+        [0,0],[0,1],[1,0],[1,1],
+        [0,0],[0,1],[1,0],[1,1],
+        [0,0],[0,1],[1,0],[1,1]
+    ]))
+    
+    gen_imgs = generator(z, labelsx, img_shape)
     save_image(gen_imgs.data, "results/images/%d.png" % batches_done, nrow=n_row, normalize=True)
 
 
@@ -179,11 +184,11 @@ for epoch in range(opt.n_epochs):
         masks = sample['mask']
 
         # Adversarial ground truths
-        valid = Variable(FloatTensor(batch_size, 1).fill_(1.0), requires_grad=False)
-        fake = Variable(FloatTensor(batch_size, 1).fill_(0.0), requires_grad=False)
+        valid = FloatTensor(batch_size, 1).fill_(1.0)
+        fake = FloatTensor(batch_size, 1).fill_(0.0)
 
         # Configure input
-        real_imgs = Variable(imgs.type(FloatTensor))
+        real_imgs = imgs.type(FloatTensor)
 
         # -----------------
         #  Train Generator
@@ -192,7 +197,7 @@ for epoch in range(opt.n_epochs):
         optimizer_G.zero_grad()
 
         # Sample noise and labels as generator input
-        z = Variable(FloatTensor(np.random.normal(0, 1, (batch_size, opt.latent_dim))))
+        z = FloatTensor(np.random.normal(0, 1, (batch_size, opt.latent_dim)))
         gen_mask = torch.randint(0,2, (batch_size, len(tags)))
 
         # Generate a batch of images
@@ -232,6 +237,6 @@ for epoch in range(opt.n_epochs):
 
         batches_done = epoch * len(dataloader) + i
         if batches_done % opt.sample_interval == 0:
-            sample_image(n_row=10, batches_done=batches_done)
+            sample_image(n_row=4, batches_done=batches_done)
 
 signal_handler(0,0)
