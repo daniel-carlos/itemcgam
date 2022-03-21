@@ -14,9 +14,10 @@
             "cwd": "${workspaceFolder}/",
             "args": [
                 "--batch_size", "32",
-                "--channels", "3",
-                "--n_epochs", "3",
+                "--channels", "1",
+                "--n_epochs", "2000",
                 "--img_size", "16",
+                "--resume"
             ]
         },
     ]

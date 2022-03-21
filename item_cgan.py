@@ -1,6 +1,7 @@
 import signal
 import sys
 import itertools
+from tabnanny import check
 
 from models import Generator, Discriminator
 from loaders import ItemDataset
@@ -20,7 +21,6 @@ from torch.utils.data import Dataset, DataLoader
 
 import torch
 
-os.makedirs("images", exist_ok=True)
 os.makedirs("results/images", exist_ok=True)
 os.makedirs("results/models", exist_ok=True)
 
@@ -43,13 +43,15 @@ parser.add_argument("--img_size", type=int, default=64,
                     help="size of each image dimension")
 parser.add_argument("--channels", type=int, default=1,
                     help="number of image channels")
-parser.add_argument("--sample_interval", type=int, default=400,
-                    help="interval between image sampling")
+parser.add_argument("--sample_interval", type=int, default=5,
+                    help="interval in epochs between image sampling")
+parser.add_argument("--mask_size", type=int, default=5,
+                    help="size of the mask of features")
 parser.add_argument("--json_data", type=str,
                     default="./dataset/items/items.json", help="path to json data")
 parser.add_argument("--imgs_path", type=str,
                     default="./dataset/items/images", help="path to images")
-parser.add_argument("--resume", type=bool, default=False,
+parser.add_argument("--resume", action="store_true", 
                     help="resume last session")
 opt = parser.parse_args()
 print(opt)
@@ -61,15 +63,8 @@ cuda = True if torch.cuda.is_available() else False
 # Loss functions
 adversarial_loss = torch.nn.MSELoss()
 
-# Initialize generator and discriminator
-if opt.resume:
-    generator = torch.load("results/models/item_cgan_g.pt")
-    discriminator = torch.load("results/models/item_cgan_d.pt")
-    generator.eval()
-    discriminator.eval()
-else:
-    generator = Generator(opt.latent_dim, 5, img_shape)
-    discriminator = Discriminator(5, img_shape)
+generator = Generator(opt.latent_dim, opt.mask_size, img_shape)
+discriminator = Discriminator(5, img_shape)
 
 if cuda:
     generator.cuda()
@@ -94,7 +89,7 @@ FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 LongTensor = torch.cuda.LongTensor if cuda else torch.LongTensor
 
 
-def sample_image(batches_done):
+def sample_image(epochs):
     # Sample noise
     all_possibs = [
         [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 1], [0, 0, 0, 0, 1], [
@@ -121,19 +116,30 @@ def sample_image(batches_done):
     labelsx = torch.from_numpy(np_arr)
 
     gen_imgs = generator(z, labelsx, img_shape)
-    save_image(gen_imgs.data, "results/images/%d.png" %
-               batches_done, nrow=8, normalize=True)
+    save_image(gen_imgs.data, f"results/images/{epochs}.png", nrow=8, normalize=True)
 
 
 def save_checkpoint():
     torch.save(generator, "results/models/item_cgan_g.pt")
     torch.save(discriminator, "results/models/item_cgan_d.pt")
+    torch.save({
+        'epoch': epoch+1,
+        'generator_state_dict': generator.state_dict(),
+        'optimizer_G_state_dict': optimizer_G.state_dict(),
+        'discriminator_state_dict': discriminator.state_dict(),
+        'optimizer_D_state_dict': optimizer_D.state_dict(),
+    }, "results/models/chkpt.tar")
 
 def load_checkpoint():
-    pass #TODO:load checkpoint
+    checkpoint = torch.load("results/models/chkpt.tar")
+    generator.load_state_dict(checkpoint['generator_state_dict'])
+    optimizer_G.load_state_dict(checkpoint['optimizer_G_state_dict'])
+    discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+    optimizer_D.load_state_dict(checkpoint['optimizer_D_state_dict'])
+    return checkpoint['epoch']
 
-def signal_handler(signal, frame):
-    save_checkpoint
+def signal_handler():
+    save_checkpoint()
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -142,7 +148,7 @@ signal.signal(signal.SIGINT, signal_handler)
 #  Training
 # ----------
 
-starting_epoch = 0
+starting_epoch = load_checkpoint() if opt.resume == True else 0
 
 for epoch in range(starting_epoch, opt.n_epochs):
     for i, sample in enumerate(dataloader):
@@ -203,8 +209,8 @@ for epoch in range(starting_epoch, opt.n_epochs):
             % (epoch, opt.n_epochs, i, len(dataloader), d_loss.item(), g_loss.item())
         )
 
-        batches_done = epoch * len(dataloader) + i
-        if batches_done % opt.sample_interval == 0:
-            sample_image(batches_done=batches_done)
+        
+    if epoch % opt.sample_interval == 0:
+        sample_image(epochs=epoch)
 
-signal_handler(0, 0)
+signal_handler()
