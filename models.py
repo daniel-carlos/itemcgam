@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch
 
 class Generator(nn.Module):
-    def __init__(self, latent_dim, tags, img_shape):
+    def __init__(self, latent_dim, n_tags, img_shape):
         super(Generator, self).__init__()
 
         def block(in_feat, out_feat, normalize=True):
@@ -14,7 +14,7 @@ class Generator(nn.Module):
             return layers
 
         self.model = nn.Sequential(
-            *block(latent_dim+len(tags), 128, normalize=False),
+            *block(latent_dim+n_tags, 128, normalize=False),
             *block(128, 256),
             *block(256, 512),
             *block(512, 1024),
@@ -31,10 +31,10 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, tags, img_shape):
+    def __init__(self, n_tags, img_shape):
         super(Discriminator, self).__init__()
         self.model = nn.Sequential(
-            nn.Linear(int(np.prod(img_shape)) + len(tags), 512),
+            nn.Linear(int(np.prod(img_shape)) + n_tags, 512),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(512, 512),
             nn.Dropout(0.4),

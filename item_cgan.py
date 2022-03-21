@@ -1,5 +1,6 @@
 import signal
 import sys
+import itertools 
 
 from models import Generator, Discriminator
 
@@ -35,6 +36,7 @@ parser.add_argument("--channels", type=int, default=1, help="number of image cha
 parser.add_argument("--sample_interval", type=int, default=400, help="interval between image sampling")
 parser.add_argument("--json_data", type=str, default="./dataset/items/items.json", help="path to json data")
 parser.add_argument("--imgs_path", type=str, default="./dataset/items/images", help="path to images")
+parser.add_argument("--resume", type=bool, default=False, help="resume last session")
 opt = parser.parse_args()
 print(opt)
 
@@ -42,45 +44,68 @@ img_shape = (opt.channels, opt.img_size, opt.img_size)
 
 cuda = True if torch.cuda.is_available() else False
 
-tags = [
-        # "Boots",
-        # "ManaRegen",
-        # "HealthRegen",
-        # "Health",
-        # "CriticalStrike",
-        "SpellDamage",
-        # "Mana",
-        # "Armor",
-        # "SpellBlock",
-        # "LifeSteal",
-        # "SpellVamp",
-        # "Jungle",
-        "Damage",
-        # "Lane",
-        # "AttackSpeed",
-        # "OnHit",
-        # "Consumable",
-        # "Active",
-        # "Stealth",
-        # "Vision",
-        # "CooldownReduction",
-        # "NonbootsMovement",
-        # "AbilityHaste",
-        # "Tenacity",
-        # "MagicPenetration",
-        # "ArmorPenetration",
-        # "Aura",
-        # "Slow",
-        # "Trinket",
-        # "GoldPer"
-    ]
+# tags = [
+#         "Boots",
+#         "ManaRegen",
+#         "HealthRegen",
+#         "Health",
+#         "CriticalStrike",
+#         "SpellDamage",
+#         "Mana",
+#         "Armor",
+#         "SpellBlock",
+#         "LifeSteal",
+#         "SpellVamp",
+#         "Jungle",
+#         "Damage",
+#         "Lane",
+#         "AttackSpeed",
+#         "OnHit",
+#         "Consumable",
+#         "Active",
+#         "Stealth",
+#         "Vision",
+#         "CooldownReduction",
+#         "NonbootsMovement",
+#         "AbilityHaste",
+#         "Tenacity",
+#         "MagicPenetration",
+#         "ArmorPenetration",
+#         "Aura",
+#         "Slow",
+#         "Trinket",
+#         "GoldPer"
+#     ]
+
+def create_mask(data):
+    mask = []
+
+    # Attack
+    mask.append(1 if len(np.intersect1d(data, ["AttackSpeed","CriticalStrike","LifeSteal","SpellDamage","SpellDamage","SpellVamp","Damage",])) > 0 else 0) 
+    # Defense
+    mask.append(1 if len(np.intersect1d(data, ["Health","Armor","SpellBlock","HealthRegen",])) > 0 else 0) 
+    # Physical
+    mask.append(1 if len(np.intersect1d(data, ["AttackSpeed","CriticalStrike","LifeSteal","Armor","Damage",])) > 0 else 0) 
+    # Magic
+    mask.append(1 if len(np.intersect1d(data, ["AbilityHaste","CooldownReduction","SpellDamage","ManaRegen","SpellDamage","Mana","SpellBlock","SpellVamp",])) > 0 else 0) 
+    # Utility
+    mask.append(1 if len(np.intersect1d(data, ["AbilityHaste","CooldownReduction","Vision","Stealth","Consumable","AttackSpeed","ManaRegen","Boots","Health","Mana","LifeSteal","SpellVamp","HealthRegen",])) > 0 else 0) 
+    
+    return mask
+
 
 # Loss functions
 adversarial_loss = torch.nn.MSELoss()
 
 # Initialize generator and discriminator
-generator = Generator(opt.latent_dim, tags, img_shape)
-discriminator = Discriminator(tags, img_shape)
+if opt.resume:
+    generator = torch.load("results/models/item_cgan_g.pt")
+    discriminator = torch.load("results/models/item_cgan_d.pt")
+    generator.eval()
+    discriminator.eval()
+else:
+    generator = Generator(opt.latent_dim, 5, img_shape)
+    discriminator = Discriminator(5, img_shape)
 
 if cuda:
     generator.cuda()
@@ -90,18 +115,12 @@ if cuda:
 import json
 
 
-def create_mask(data, tags):
-    mask = []
-    for item in tags:
-        mask.append(1 if item in data else 0)
-    return mask
 
 from PIL import Image
 import torchvision.transforms.functional as TF
 class ItemDataset(Dataset):
-    def __init__(self, json_path, imgs_path, tags, transform=None):
+    def __init__(self, json_path, imgs_path, transform=None):
         self.jsonPath = json_path
-        self.tag_mask = tags
         self.transform = transform
         f = open(json_path, encoding="utf8")
         self.jsonData = json.load(f)['data']
@@ -111,7 +130,7 @@ class ItemDataset(Dataset):
             data = self.jsonData[itemKey]
             img_path = f"{imgs_path}/{itemKey}.png"
             self.items.append(img_path)
-            self.tag_masks.append(create_mask(data['tags'], tags))
+            self.tag_masks.append(create_mask(data['tags']))
 
 
     def __len__(self):
@@ -135,7 +154,7 @@ class ItemDataset(Dataset):
 # Configure data loader
 transform = transforms.Grayscale() if opt.channels == 1 else None
 dataloader = DataLoader(
-    ItemDataset(opt.json_data, opt.imgs_path, tags, transform),
+    ItemDataset(opt.json_data, opt.imgs_path, transform),
     # ItemDataset("./items.json", "./items", tags),
     batch_size=opt.batch_size,
     shuffle=True,
@@ -149,24 +168,33 @@ FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 LongTensor = torch.cuda.LongTensor if cuda else torch.LongTensor
 
 
-def sample_image(n_row, batches_done):
+def sample_image(batches_done):
     # Sample noise
-    z = FloatTensor(np.random.normal(0, 1, (n_row ** 2, opt.latent_dim)))
+    all_possibs = [
+            [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 1], [0, 0, 0, 0, 1], [0, 0, 0, 1, 0], [0, 0, 0, 1, 0], [0, 0, 0, 1, 1], [0, 0, 0, 1, 1],
+            [0, 0, 1, 0, 0], [0, 0, 1, 0, 0], [0, 0, 1, 0, 1], [0, 0, 1, 0, 1], [0, 0, 1, 1, 0], [0, 0, 1, 1, 0], [0, 0, 1, 1, 1], [0, 0, 1, 1, 1],
+            [0, 1, 0, 0, 0], [0, 1, 0, 0, 0], [0, 1, 0, 0, 1], [0, 1, 0, 0, 1], [0, 1, 0, 1, 0], [0, 1, 0, 1, 0], [0, 1, 0, 1, 1], [0, 1, 0, 1, 1],
+            [0, 1, 1, 0, 0], [0, 1, 1, 0, 0], [0, 1, 1, 0, 1], [0, 1, 1, 0, 1], [0, 1, 1, 1, 0], [0, 1, 1, 1, 0], [0, 1, 1, 1, 1], [0, 1, 1, 1, 1],
+            [1, 0, 0, 0, 0], [1, 0, 0, 0, 0], [1, 0, 0, 0, 1], [1, 0, 0, 0, 1], [1, 0, 0, 1, 0], [1, 0, 0, 1, 0], [1, 0, 0, 1, 1], [1, 0, 0, 1, 1], 
+            [1, 0, 1, 0, 0], [1, 0, 1, 0, 0], [1, 0, 1, 0, 1], [1, 0, 1, 0, 1], [1, 0, 1, 1, 0], [1, 0, 1, 1, 0], [1, 0, 1, 1, 1], [1, 0, 1, 1, 1],
+            [1, 1, 0, 0, 0], [1, 1, 0, 0, 0], [1, 1, 0, 0, 1], [1, 1, 0, 0, 1], [1, 1, 0, 1, 0], [1, 1, 0, 1, 0], [1, 1, 0, 1, 1], [1, 1, 0, 1, 1],
+            [1, 1, 1, 0, 0], [1, 1, 1, 0, 0], [1, 1, 1, 0, 1], [1, 1, 1, 0, 1], [1, 1, 1, 1, 0], [1, 1, 1, 1, 0], [1, 1, 1, 1, 1], [1, 1, 1, 1, 1]
+        ]
+    z = FloatTensor(np.random.normal(0, 1, (len(all_possibs), opt.latent_dim)))
 
-    labelsx = torch.from_numpy(np.array([
-        [0,0],[0,1],[1,0],[1,1],
-        [0,0],[0,1],[1,0],[1,1],
-        [0,0],[0,1],[1,0],[1,1],
-        [0,0],[0,1],[1,0],[1,1]
-    ]))
+
+    np_arr =  np.array(all_possibs).reshape((len(all_possibs),5))
+    # Gerar todas as possibilidades
+    labelsx = torch.from_numpy(np_arr)
     
     gen_imgs = generator(z, labelsx, img_shape)
-    save_image(gen_imgs.data, "results/images/%d.png" % batches_done, nrow=n_row, normalize=True)
+    save_image(gen_imgs.data, "results/images/%d.png" % batches_done, nrow=8, normalize=True)
 
 
 
 def signal_handler(signal, frame):
-  torch.save(generator, "results/models/item_cgan.pt")
+  torch.save(generator, "results/models/item_cgan_g.pt")
+  torch.save(discriminator, "results/models/item_cgan_d.pt")
   sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -198,7 +226,7 @@ for epoch in range(opt.n_epochs):
 
         # Sample noise and labels as generator input
         z = FloatTensor(np.random.normal(0, 1, (batch_size, opt.latent_dim)))
-        gen_mask = torch.randint(0,2, (batch_size, len(tags)))
+        gen_mask = torch.randint(0,2, (batch_size, 5))
 
         # Generate a batch of images
         gen_imgs = generator(z, gen_mask, img_shape)
@@ -237,6 +265,6 @@ for epoch in range(opt.n_epochs):
 
         batches_done = epoch * len(dataloader) + i
         if batches_done % opt.sample_interval == 0:
-            sample_image(n_row=4, batches_done=batches_done)
+            sample_image(batches_done=batches_done)
 
 signal_handler(0,0)
